@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
-	"github.com/gin-gonic/gin"
+	"io"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
+
 	"context-aware-ai/db"
-	"context-aware-ai/models" 
+	"context-aware-ai/models"
 )
+
 
 func storeMemory(memory models.Memory) error {
 	return db.GetDB().Create(&memory).Error
@@ -35,7 +41,53 @@ func buildLLMPrompt(userQuery string) (string, error) {
 }
 
 func CallLLM(prompt string) (string, error) {
-	return "This is a simulated response based on the query.", nil
+	type ollamaRequest struct {
+		Model  string `json:"model"`
+		Prompt string `json:"prompt"`
+		Stream bool   `json:"stream"`
+	}
+
+	type ollamaResponse struct {
+		Response string `json:"response"`
+		Error    string `json:"error"`
+	}
+
+	reqBody := ollamaRequest{
+		Model:  "llama3.2",
+		Prompt: prompt,
+		Stream: false,
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", err
+	}
+
+	resp, err := http.Post(
+		"http://localhost:11434/api/generate",
+		"application/json",
+		bytes.NewBuffer(jsonData),
+	)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ollama error: %s", string(body))
+	}
+
+	var ollamaResp ollamaResponse
+	if err := json.NewDecoder(resp.Body).Decode(&ollamaResp); err != nil {
+		return "", err
+	}
+
+	if ollamaResp.Error != "" {
+		return "", fmt.Errorf("ollama error: %s", ollamaResp.Error)
+	}
+
+	return ollamaResp.Response, nil
 }
 
 func StoreMemoryHandler(c *gin.Context) {
