@@ -11,7 +11,7 @@
 - Embedding model: nomic-embed-text (via Ollama)
 - Current DB: SQLite (stores text + embeddings)
 - Retrieval: cosine similarity search
-[Read about cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity)
+[read about cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity)
 
 
 ## Resetting memory
