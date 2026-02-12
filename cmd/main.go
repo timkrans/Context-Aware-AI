@@ -1,22 +1,23 @@
 package main
 
 import (
-	"github.com/gin-gonic/gin"
-	"log"
 	"context-aware-ai/db"
 	"context-aware-ai/handlers"
+	"context-aware-ai/services"
 )
 
 func main() {
-	db.InitDB()
-
-	r := gin.Default()
-
-	r.POST("/memory", handlers.StoreMemoryHandler)
-	r.GET("/memory/:label", handlers.GetMemoryHandler)
-	r.POST("/query", handlers.QueryLLMHandler)
-
-	if err := r.Run(":8080"); err != nil {
-		log.Fatalf("Error starting server: %v", err)
+	db.Init()
+	memoryService := &services.MemoryService{DB: db.DB}
+	ollamaService := &services.OllamaService{
+		BaseURL:        "http://localhost:11434",
+		GenerateModel:  "llama3.2",
+		EmbeddingModel: "nomic-embed-text",
 	}
+	chat := &handlers.ChatHandler{
+		MemoryService: memoryService,
+		OllamaService: ollamaService,
+		TopK:          3,
+	}
+	chat.RunLoop()
 }

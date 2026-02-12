@@ -2,35 +2,20 @@ package db
 
 import (
 	"log"
-	"sync"
+	"context-aware-ai/models"
+	"gorm.io/gorm/logger"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
-	"context-aware-ai/models"
 )
 
-var (
-	db   *gorm.DB
-	once sync.Once
-)
+var DB *gorm.DB
 
-func InitDB() {
-	once.Do(func() {
-		var err error
-		db, err = gorm.Open(sqlite.Open("memory.db"), &gorm.Config{})
-		if err != nil {
-			log.Fatalf("Error connecting to the database: %v", err)
-		}
-
-		err = db.AutoMigrate(&models.Memory{}) 
-		if err != nil {
-			log.Fatalf("Error migrating the database: %v", err)
-		}
-	})
-}
-
-func GetDB() *gorm.DB {
-	if db == nil {
-		log.Fatal("Database not initialized. Call InitDB first.")
+//remove log will add it back when switch to vectorized db
+func Init() {
+	var err error
+	DB, err = gorm.Open(sqlite.Open("memory.db"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent),})
+	if err != nil {
+		log.Fatal("Failed to connect database:", err)
 	}
-	return db
+	DB.AutoMigrate(&models.Memory{})
 }
