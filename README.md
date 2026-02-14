@@ -21,4 +21,3 @@
 - change the Db to vector DB for faster query times by the model
 - Add metadata filtering (timestamps, tags, importance)
 - Implement hybrid search (semantic + keyword)
-- multiple users so memories can be seperated by user
