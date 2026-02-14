@@ -4,9 +4,8 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
-
-	"gorm.io/gorm"
 	"context-aware-ai/models"
+	"gorm.io/gorm"
 )
 
 type MemoryService struct {
@@ -18,7 +17,7 @@ func NewMemoryService(db *gorm.DB) *MemoryService {
 	return &MemoryService{DB: db}
 }
 
-func (s *MemoryService) StoreMemory(text string, embedding []float64) error {
+func (s *MemoryService) StoreMemory(text string, embedding []float64, userID uint, tabID uint) error {
 	data, err := json.Marshal(embedding)
 	if err != nil {
 		return err
@@ -27,19 +26,21 @@ func (s *MemoryService) StoreMemory(text string, embedding []float64) error {
 	mem := models.Memory{
 		Text:      text,
 		Embedding: data,
+		UserID:    userID,
+		TabID:     tabID,
 	}
 
 	return s.DB.Create(&mem).Error
 }
 
-func (s *MemoryService) GetAllMemories() ([]models.Memory, error) {
+func (s *MemoryService) GetAllMemories(userID uint, tabID uint) ([]models.Memory, error) {
 	var memories []models.Memory
-	err := s.DB.Find(&memories).Error
+	err := s.DB.Where("user_id = ? AND tab_id = ?", userID, tabID).Find(&memories).Error
 	return memories, err
 }
 
-func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64, topK int) ([]models.Memory, error) {
-	memories, err := s.GetAllMemories()
+func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64, topK int, userID uint, tabID uint) ([]models.Memory, error) {
+	memories, err := s.GetAllMemories(userID, tabID)
 	if err != nil {
 		return nil, err
 	}
