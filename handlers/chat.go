@@ -8,6 +8,7 @@ import (
 	"strings"
 	"context-aware-ai/models"
 	"context-aware-ai/services"
+	"golang.org/x/crypto/ssh/terminal"
 )
 
 type ChatHandler struct {
@@ -22,35 +23,83 @@ func (ch *ChatHandler) RunLoop() {
 	reader := bufio.NewReader(os.Stdin)
 	fmt.Println("Ollama Memory Chatbot (type 'quit' to exit)")
 
-	var userID uint
-	fmt.Print("Enter User ID (or type 'new' to create a new user): ")
-	userInput, _ := reader.ReadString('\n')
-	userInput = strings.TrimSpace(userInput)
+	var username string
+	fmt.Print("Enter your username (or type 'new' to create a new user): ")
+	usernameInput, _ := reader.ReadString('\n')
+	usernameInput = strings.TrimSpace(usernameInput)
 
-	if userInput == "new" {
-		fmt.Print("Enter new user name: ")
-		name, _ := reader.ReadString('\n')
-		name = strings.TrimSpace(name)
-		user, err := ch.UserService.CreateUser(name)
+	var user *models.User
+
+	if usernameInput == "new" {
+		fmt.Print("Enter new username: ")
+		username, _ = reader.ReadString('\n')
+		username = strings.TrimSpace(username)
+
+		fmt.Print("Enter password: ")
+		//the terminal method only works on linux and mac so this a problem for window 
+		//TODO fix for windows
+		passwordBytes, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			log.Println("Error reading password:", err)
+			return
+		}
+		password := string(passwordBytes)
+		fmt.Println()
+		user, err = ch.UserService.CreateUser(username, password)
 		if err != nil {
 			log.Println("Error creating user:", err)
 			return
 		}
-		fmt.Println("Created new user:", user.Name)
-		userID = user.ID
+		if user == nil {
+			log.Println("User creation failed: user is nil")
+			return
+		}
+		fmt.Println("Created new user:", user.UserName)
 	} else {
-		fmt.Sscanf(userInput, "%d", &userID)
-		user, err := ch.UserService.GetUserByID(userID)
+		username = usernameInput
+		//have to declare error to make it so you dont use :=
+		var err error
+		user, err = ch.UserService.GetUserByUserName(username)
 		if err != nil {
 			log.Println("Error retrieving user:", err)
 			return
 		}
-		fmt.Println("Selected user:", user.Name)
+		fmt.Println("Selected user:", user.UserName)
+		fmt.Print("Enter password: ")
+		//the terminal method only works on linux and mac so this a problem for window 
+		//TODO fix for windows
+		passwordBytes, err := terminal.ReadPassword(int(os.Stdin.Fd()))
+		if err != nil {
+			log.Println("Error reading password:", err)
+			return
+		}
+		password := string(passwordBytes)
+		fmt.Println()
+
+		valid, err := ch.UserService.CheckPassword(user.ID, password)
+		if err != nil {
+			log.Println("Error checking password:", err)
+			return
+		}
+		if !valid {
+			log.Println("Invalid password")
+			return
+		}
+		fmt.Println("Password verified successfully.")
 	}
 
-	tabs, err := ch.TabService.GetTabs(userID)
+	if user == nil || user.ID == 0 {
+		log.Println("Error: User ID is invalid")
+		return
+	}
+
+	tabs, err := ch.TabService.GetTabs(user.ID)
 	if err != nil {
 		log.Println("Error getting tabs:", err)
+		return
+	}
+	if tabs == nil {
+		log.Println("No tabs found for user.")
 		return
 	}
 
@@ -68,7 +117,7 @@ func (ch *ChatHandler) RunLoop() {
 		fmt.Print("Enter new tab name: ")
 		tabName, _ := reader.ReadString('\n')
 		tabName = strings.TrimSpace(tabName)
-		selectedTab, err = ch.TabService.CreateTab(userID, tabName)
+		selectedTab, err = ch.TabService.CreateTab(user.ID, tabName)
 		if err != nil {
 			log.Println("Error creating new tab:", err)
 			return
@@ -84,7 +133,7 @@ func (ch *ChatHandler) RunLoop() {
 		selectedTab = &tabs[tabIndex-1]
 	}
 
-	ch.startChatLoop(reader, userID, selectedTab.ID)
+	ch.startChatLoop(reader, user.ID, selectedTab.ID)
 }
 
 func (ch *ChatHandler) startChatLoop(reader *bufio.Reader, userID uint, tabID uint) {
@@ -97,6 +146,12 @@ func (ch *ChatHandler) startChatLoop(reader *bufio.Reader, userID uint, tabID ui
 		}
 		if strings.ToLower(userInput) == "quit" {
 			fmt.Println("Goodbye!")
+			break
+		}
+
+		if strings.ToLower(userInput) == "logout" {
+			fmt.Println("logging out...")
+			ch.RunLoop()
 			break
 		}
 		queryEmbedding, err := ch.OllamaService.GetEmbedding(userInput)
