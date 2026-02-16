@@ -62,7 +62,7 @@ func (s *UserService) CheckPassword(userID uint, password string) (bool, error) 
 
 	err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password))
 	if err != nil {
-		return false, nil 
+		return false, nil
 	}
 	return true, nil
 }

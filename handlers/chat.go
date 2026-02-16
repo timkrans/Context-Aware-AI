@@ -1,14 +1,15 @@
 package handlers
 
 import (
-	"bufio"
 	"fmt"
-	"log"
-	"os"
 	"strings"
+	"net/http"
 	"context-aware-ai/models"
 	"context-aware-ai/services"
-	"golang.org/x/crypto/ssh/terminal"
+	"github.com/gin-gonic/gin"
+	"github.com/dgrijalva/jwt-go"
+	"time"
+	"strconv"
 )
 
 type ChatHandler struct {
@@ -17,166 +18,266 @@ type ChatHandler struct {
 	UserService   *services.UserService
 	OllamaService *services.OllamaService
 	TopK          int
+	JWTSecret     []byte
 }
 
-func (ch *ChatHandler) RunLoop() {
-	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("Ollama Memory Chatbot (type 'quit' to exit)")
+func (ch *ChatHandler) SetupRoutes(router *gin.Engine) {
+	router.POST("/create-user", ch.CreateUserHandler)
+	router.POST("/login", ch.LoginHandler)
+	router.POST("/refresh-token", ch.RefreshTokenHandler)
+	router.GET("/tabs", ch.GetTabsHandler)
+	router.POST("/tabs", ch.CreateTabHandler)
+	router.POST("/chat", ch.ChatHandler)
+}
 
-	var username string
-	fmt.Print("Enter your username (or type 'new' to create a new user): ")
-	usernameInput, _ := reader.ReadString('\n')
-	usernameInput = strings.TrimSpace(usernameInput)
-
-	var user *models.User
-
-	if usernameInput == "new" {
-		fmt.Print("Enter new username: ")
-		username, _ = reader.ReadString('\n')
-		username = strings.TrimSpace(username)
-
-		fmt.Print("Enter password: ")
-		//the terminal method only works on linux and mac so this a problem for window 
-		//TODO fix for windows
-		passwordBytes, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			log.Println("Error reading password:", err)
-			return
-		}
-		password := string(passwordBytes)
-		fmt.Println()
-		user, err = ch.UserService.CreateUser(username, password)
-		if err != nil {
-			log.Println("Error creating user:", err)
-			return
-		}
-		if user == nil {
-			log.Println("User creation failed: user is nil")
-			return
-		}
-		fmt.Println("Created new user:", user.UserName)
-	} else {
-		username = usernameInput
-		//have to declare error to make it so you dont use :=
-		var err error
-		user, err = ch.UserService.GetUserByUserName(username)
-		if err != nil {
-			log.Println("Error retrieving user:", err)
-			return
-		}
-		fmt.Println("Selected user:", user.UserName)
-		fmt.Print("Enter password: ")
-		//the terminal method only works on linux and mac so this a problem for window 
-		//TODO fix for windows
-		passwordBytes, err := terminal.ReadPassword(int(os.Stdin.Fd()))
-		if err != nil {
-			log.Println("Error reading password:", err)
-			return
-		}
-		password := string(passwordBytes)
-		fmt.Println()
-
-		valid, err := ch.UserService.CheckPassword(user.ID, password)
-		if err != nil {
-			log.Println("Error checking password:", err)
-			return
-		}
-		if !valid {
-			log.Println("Invalid password")
-			return
-		}
-		fmt.Println("Password verified successfully.")
+func (ch *ChatHandler) CreateUserHandler(c *gin.Context) {
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
 	}
 
-	if user == nil || user.ID == 0 {
-		log.Println("Error: User ID is invalid")
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	user, err := ch.UserService.CreateUser(input.Username, input.Password)
+	if err != nil || user == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating user"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, user)
+}
+
+func (ch *ChatHandler) GenerateSessionToken(user *models.User) (string, error) {
+	expirationTime := time.Now().Add(24 * time.Hour)
+	claims := &jwt.StandardClaims{
+		Issuer:    fmt.Sprintf("%d", user.ID),
+		ExpiresAt: expirationTime.Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	sessionToken, err := token.SignedString(ch.JWTSecret)
+	if err != nil {
+		return "", err
+	}
+	return sessionToken, nil
+}
+
+func (ch *ChatHandler) GenerateRefreshToken(user *models.User) (string, error) {
+	expirationTime := time.Now().Add(30 * 24 * time.Hour)
+	claims := &jwt.StandardClaims{
+		Issuer:    fmt.Sprintf("%d", user.ID),
+		ExpiresAt: expirationTime.Unix(),
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	refreshToken, err := token.SignedString(ch.JWTSecret)
+	if err != nil {
+		return "", err
+	}
+	return refreshToken, nil
+}
+
+func (ch *ChatHandler) Authenticate(c *gin.Context) (*models.User, error) {
+	sessionToken := c.GetHeader("Authorization")
+	if sessionToken == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Missing session token"})
+		return nil, fmt.Errorf("missing session token")
+	}
+	tokenString := strings.TrimPrefix(sessionToken, "Bearer ")
+	claims := &jwt.StandardClaims{}
+	_, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return ch.JWTSecret, nil
+	})
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid session token"})
+		return nil, fmt.Errorf("invalid session token")
+	}
+
+	userID := claims.Issuer
+	userIDInt, err := strconv.ParseUint(userID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+		return nil, fmt.Errorf("invalid user ID")
+	}
+
+	user, err := ch.UserService.GetUserByID(uint(userIDInt))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return nil, err
+	}
+	return user, nil
+}
+
+func (ch *ChatHandler) LoginHandler(c *gin.Context) {
+	var input struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	user, err := ch.UserService.GetUserByUserName(input.Username)
+	if err != nil || user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	valid, err := ch.UserService.CheckPassword(user.ID, input.Password)
+	if err != nil || !valid {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid password"})
+		return
+	}
+
+	accessToken, err := ch.GenerateSessionToken(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating access token"})
+		return
+	}
+
+	refreshToken, err := ch.GenerateRefreshToken(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating refresh token"})
+		return
+	}
+
+	c.Header("Authorization", "Bearer "+accessToken)
+	c.JSON(http.StatusOK, gin.H{
+		"access_token":  accessToken,
+		"refresh_token": refreshToken,
+	})
+}
+
+func (ch *ChatHandler) RefreshTokenHandler(c *gin.Context) {
+	var input struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid refresh token"})
+		return
+	}
+
+	claims := &jwt.StandardClaims{}
+	refreshTokenString := input.RefreshToken
+	_, err := jwt.ParseWithClaims(refreshTokenString, claims, func(token *jwt.Token) (interface{}, error) {
+		return ch.JWTSecret, nil
+	})
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid refresh token"})
+		return
+	}
+
+	userID := claims.Issuer
+	userIDInt, err := strconv.ParseUint(userID, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	user, err := ch.UserService.GetUserByID(uint(userIDInt))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	accessToken, err := ch.GenerateSessionToken(user)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating new access token"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"access_token": accessToken,
+	})
+}
+
+func (ch *ChatHandler) GetTabsHandler(c *gin.Context) {
+	user, err := ch.Authenticate(c)
+	if err != nil {
 		return
 	}
 
 	tabs, err := ch.TabService.GetTabs(user.ID)
 	if err != nil {
-		log.Println("Error getting tabs:", err)
-		return
-	}
-	if tabs == nil {
-		log.Println("No tabs found for user.")
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error getting tabs"})
 		return
 	}
 
-	fmt.Println("Your Tabs:")
-	for i, tab := range tabs {
-		fmt.Printf("%d: %s\n", i+1, tab.Name)
-	}
-
-	fmt.Print("Select a tab by number or type 'new' to create a new tab: ")
-	tabInput, _ := reader.ReadString('\n')
-	tabInput = strings.TrimSpace(tabInput)
-
-	var selectedTab *models.Tab
-	if tabInput == "new" {
-		fmt.Print("Enter new tab name: ")
-		tabName, _ := reader.ReadString('\n')
-		tabName = strings.TrimSpace(tabName)
-		selectedTab, err = ch.TabService.CreateTab(user.ID, tabName)
-		if err != nil {
-			log.Println("Error creating new tab:", err)
-			return
-		}
-		fmt.Println("Created new tab:", selectedTab.Name)
-	} else {
-		var tabIndex int
-		fmt.Sscanf(tabInput, "%d", &tabIndex)
-		if tabIndex < 1 || tabIndex > len(tabs) {
-			fmt.Println("Invalid tab selection.")
-			return
-		}
-		selectedTab = &tabs[tabIndex-1]
-	}
-
-	ch.startChatLoop(reader, user.ID, selectedTab.ID)
+	c.JSON(http.StatusOK, tabs)
 }
 
-func (ch *ChatHandler) startChatLoop(reader *bufio.Reader, userID uint, tabID uint) {
-	for {
-		fmt.Print("\nYou: ")
-		userInput, _ := reader.ReadString('\n')
-		userInput = strings.TrimSpace(userInput)
-		if userInput == "" {
-			continue
-		}
-		if strings.ToLower(userInput) == "quit" {
-			fmt.Println("Goodbye!")
-			break
-		}
-
-		if strings.ToLower(userInput) == "logout" {
-			fmt.Println("logging out...")
-			ch.RunLoop()
-			break
-		}
-		queryEmbedding, err := ch.OllamaService.GetEmbedding(userInput)
-		if err != nil {
-			log.Println("Error embedding:", err)
-			continue
-		}
-
-		memories, err := ch.MemoryService.RetrieveRelevant(queryEmbedding, ch.TopK, userID, tabID)
-		if err != nil {
-			log.Println("Error retrieving memories:", err)
-		}
-		prompt := buildPrompt(userInput, memories)
-		response, err := ch.OllamaService.GenerateResponse(prompt)
-		if err != nil {
-			log.Println("Error generating response:", err)
-			continue
-		}
-		fmt.Println("\nAgent:", response)
-
-		err = ch.MemoryService.StoreMemory(fmt.Sprintf("Q: %s A: %s", userInput, response), queryEmbedding, userID, tabID)
-		if err != nil {
-			log.Println("Error storing memory:", err)
-		}
+func (ch *ChatHandler) CreateTabHandler(c *gin.Context) {
+	user, err := ch.Authenticate(c)
+	if err != nil {
+		return
 	}
+
+	var input struct {
+		TabName string `json:"tab_name"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	tab, err := ch.TabService.CreateTab(user.ID, input.TabName)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error creating tab"})
+		return
+	}
+
+	c.JSON(http.StatusCreated, tab)
+}
+
+func (ch *ChatHandler) ChatHandler(c *gin.Context) {
+	var input struct {
+		TabID   uint   `json:"tab_id"`
+		Message string `json:"message"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+		return
+	}
+
+	user, err := ch.Authenticate(c)
+	if err != nil {
+		return
+	}
+
+	queryEmbedding, err := ch.OllamaService.GetEmbedding(input.Message)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error embedding message"})
+		return
+	}
+
+	memories, err := ch.MemoryService.RetrieveRelevant(queryEmbedding, ch.TopK, user.ID, input.TabID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving memories"})
+		return
+	}
+
+	prompt := buildPrompt(input.Message, memories)
+	response, err := ch.OllamaService.GenerateResponse(prompt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"})
+		return
+	}
+
+	err = ch.MemoryService.StoreMemory(fmt.Sprintf("Q: %s A: %s", input.Message, response), queryEmbedding, user.ID, input.TabID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error storing memory"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"response": response,
+	})
 }
 
 func buildPrompt(userInput string, memories []models.Memory) string {

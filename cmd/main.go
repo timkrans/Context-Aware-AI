@@ -1,20 +1,27 @@
 package main
 
 import (
-	"fmt"
 	"context-aware-ai/db"
 	"context-aware-ai/handlers"
 	"context-aware-ai/services"
-	"runtime"
+	"log"
+	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 	"os"
 )
 
 func main() {
-	if runtime.GOOS == "windows" {
-		fmt.Println("Windows is not currently supported")
-		os.Exit(1)
+	if err := godotenv.Load(); err != nil {
+		log.Fatal("Error loading .env file")
 	}
+
+	jwtSecretKey := os.Getenv("JWT_SECRET_KEY")
+	if jwtSecretKey == "" {
+		log.Fatal("JWT_SECRET_KEY not set in .env file")
+	}
+
 	db.Init()
+
 	memoryService := &services.MemoryService{DB: db.DB}
 	tabService := &services.TabService{DB: db.DB}
 	userService := &services.UserService{DB: db.DB}
@@ -30,7 +37,12 @@ func main() {
 		UserService:   userService,
 		OllamaService: ollamaService,
 		TopK:          3,
+		JWTSecret:     []byte(jwtSecretKey),
 	}
 
-	chatHandler.RunLoop()
+	r := gin.Default()
+	chatHandler.SetupRoutes(r)
+	if err := r.Run(":3000"); err != nil {
+		log.Fatal(err)
+	}
 }
