@@ -34,3 +34,8 @@ func (s *TabService) GetTabByID(tabID uint) (*models.Tab, error) {
 	err := s.DB.First(&tab, tabID).Error
 	return &tab, err
 }
+
+func (s *TabService) DeleteTab(userID uint, tabID uint) error {
+    err := s.DB.Where("user_id = ? AND id = ?", userID, tabID).Delete(&models.Tab{}).Error
+    return err
+}

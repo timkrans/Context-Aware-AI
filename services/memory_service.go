@@ -89,3 +89,8 @@ func cosineSimilarity(a, b []float64) float64 {
 	}
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
+
+func (s *MemoryService) DeleteMemoriesByTabID(userID uint, tabID uint) error {
+    err := s.DB.Where("user_id = ? AND tab_id = ?", userID, tabID).Delete(&models.Memory{}).Error
+    return err
+}
