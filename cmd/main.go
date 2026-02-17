@@ -44,12 +44,12 @@ func main() {
 		return &ClaudeService{
 			APIKey: os.Getenv("CLAUDE_API_KEY"),
 			Model:  os.Getenv("CLAUDE_MODEL"),
-		}
+		}*/
 	case "gemini":
 		return &GeminiService{
 			APIKey: os.Getenv("GEMINI_API_KEY"),
 			Model:  os.Getenv("GEMINI_MODEL"),
-		}*/
+		}
 	case "ollama":
 		llmService = ollamaService
 	default:
