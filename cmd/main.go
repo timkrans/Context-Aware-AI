@@ -35,20 +35,23 @@ func main() {
 	llmProvider := os.Getenv("LLM_PROVIDER")
 	switch llmProvider {
 	case "openai":
-		return &OpenAIService{
+		llmService = &services.OpenAIService{
 			APIKey: os.Getenv("OPENAI_API_KEY"),
 			Model:  os.Getenv("OPENAI_MODEL"),
 		}
+		break
 	case "claude":
-		return &ClaudeService{
+		llmService = &services.ClaudeService{
 			APIKey: os.Getenv("CLAUDE_API_KEY"),
 			Model:  os.Getenv("CLAUDE_MODEL"),
 		}
+		break
 	case "gemini":
-		return &GeminiService{
+		llmService = &services.GeminiService{
 			APIKey: os.Getenv("GEMINI_API_KEY"),
 			Model:  os.Getenv("GEMINI_MODEL"),
 		}
+		break
 	case "ollama":
 		llmService = ollamaService
 	default:
