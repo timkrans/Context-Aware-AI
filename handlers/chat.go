@@ -15,6 +15,7 @@ import (
 type ChatHandler struct {
 	MemoryService *services.MemoryService
 	TabService    *services.TabService
+	LLMService    services.LLMService 
 	UserService   *services.UserService
 	OllamaService *services.OllamaService
 	TopK          int
@@ -27,6 +28,7 @@ func (ch *ChatHandler) SetupRoutes(router *gin.Engine) {
 	router.POST("/refresh-token", ch.RefreshTokenHandler)
 	router.GET("/tabs", ch.GetTabsHandler)
 	router.POST("/tabs", ch.CreateTabHandler)
+	router.DELETE("/tabs/:id", ch.DeleteTabHandler)
 	router.POST("/chat", ch.ChatHandler)
 }
 
@@ -250,6 +252,19 @@ func (ch *ChatHandler) ChatHandler(c *gin.Context) {
 		return
 	}
 
+	tabs, err := ch.TabService.GetTabs(user.ID)
+	if err != nil || len(tabs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No tabs found"})
+		return
+	}
+
+	if input.TabID < 1 || input.TabID > uint(len(tabs)) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid TabID"})
+		return
+	}
+
+	tab := tabs[input.TabID-1]
+	input.TabID = tab.ID
 	queryEmbedding, err := ch.OllamaService.GetEmbedding(input.Message)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error embedding message"})
@@ -263,7 +278,7 @@ func (ch *ChatHandler) ChatHandler(c *gin.Context) {
 	}
 
 	prompt := buildPrompt(input.Message, memories)
-	response, err := ch.OllamaService.GenerateResponse(prompt)
+	response, err := ch.LLMService.GenerateResponse(prompt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"})
 		return
@@ -291,4 +306,39 @@ func buildPrompt(userInput string, memories []models.Memory) string {
 	sb.WriteString("\nUser Question:\n")
 	sb.WriteString(userInput)
 	return sb.String()
+}
+
+func (ch *ChatHandler) DeleteTabHandler(c *gin.Context) {
+    user, err := ch.Authenticate(c)
+    if err != nil {
+        return
+    }
+
+    tabIDStr := c.Param("id")
+    tabID, err := strconv.Atoi(tabIDStr)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid tab ID"})
+        return
+    }
+
+    tabs, err := ch.TabService.GetTabs(user.ID)
+    if err != nil || tabID < 1 || tabID > len(tabs) {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Tab not found"})
+        return
+    }
+
+    tab := tabs[tabID-1]
+    err = ch.MemoryService.DeleteMemoriesByTabID(user.ID, tab.ID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error deleting memories"})
+        return
+    }
+
+    err = ch.TabService.DeleteTab(user.ID, tab.ID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error deleting tab"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"message": "Tab and associated memories deleted successfully"})
 }
