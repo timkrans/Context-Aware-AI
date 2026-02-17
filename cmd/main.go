@@ -39,12 +39,12 @@ func main() {
 		return &OpenAIService{
 			APIKey: os.Getenv("OPENAI_API_KEY"),
 			Model:  os.Getenv("OPENAI_MODEL"),
-		}
+		}*/
 	case "claude":
 		return &ClaudeService{
 			APIKey: os.Getenv("CLAUDE_API_KEY"),
 			Model:  os.Getenv("CLAUDE_MODEL"),
-		}*/
+		}
 	case "gemini":
 		return &GeminiService{
 			APIKey: os.Getenv("GEMINI_API_KEY"),
