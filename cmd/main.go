@@ -34,12 +34,11 @@ func main() {
 	var llmService services.LLMService
 	llmProvider := os.Getenv("LLM_PROVIDER")
 	switch llmProvider {
-	/*TODO  implement
 	case "openai":
 		return &OpenAIService{
 			APIKey: os.Getenv("OPENAI_API_KEY"),
 			Model:  os.Getenv("OPENAI_MODEL"),
-		}*/
+		}
 	case "claude":
 		return &ClaudeService{
 			APIKey: os.Getenv("CLAUDE_API_KEY"),
