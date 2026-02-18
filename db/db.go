@@ -21,5 +21,6 @@ func Init() {
 		&models.User{}, 
 		&models.Tab{}, 
 		&models.Memory{},
+		&models.Document{},
 	)
 }
