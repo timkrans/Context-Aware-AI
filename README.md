@@ -1,5 +1,5 @@
 # Context-Aware-AI
-- This is a memory retrieval system that allows the user to have its memories encoded and saved for easy retrieval.
+- This is a memory retrieval system that allows the user to have its memories encoded and saved for easy retrieval. It also has rag so files can be uploaded and used as well.
 
 ## Prerequisites 
 - install ollama
@@ -46,6 +46,19 @@
   - Request Body: `{ "tab_id": <tab_id>, "message": "string" }`
   - Response: `200 OK` with AI-generated response
 
+### 6. Upload File
+- POST /upload
+  - Request Header: `Authorization: Bearer <session_token>`
+  - Form Data:
+      - `tab_id: <tab_index>`
+      - `file: <uploaded_file>`
+  - Response: 200 OK with { "status": "indexed" }
+
+### 7. Delete Tab
+- DELETE /tabs/:id
+  - Request Header: `Authorization: Bearer <session_token>`
+  - Path Param: `id = tab index (1 = first tab)`
+  - Response: 200 OK with "Tab, memories, and documents deleted successfully"
 
 ## Resetting memory
 - If for whatever reason you want to reset memory delete the .db file and it will
