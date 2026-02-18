@@ -6,13 +6,13 @@ import (
 	"context-aware-ai/services"
 	"log"
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
+	"context-aware-ai/loadenv"
 	"os"
-	"github.com/gin-contrib/cors"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
+	//added my own loading to help keep depencies to a minimum
+	if err := loadenv.LoadEnv(""); err != nil {
 		log.Fatal("Error loading .env file")
 	}
 
@@ -22,15 +22,15 @@ func main() {
 	}
 
 	db.Init()
-
 	memoryService := &services.MemoryService{DB: db.DB}
 	tabService := &services.TabService{DB: db.DB}
 	userService := &services.UserService{DB: db.DB}
 	ollamaService := &services.OllamaService{
-		BaseURL:        "http://localhost:11434",
-		GenerateModel:  "llama3.2",
-		EmbeddingModel: "nomic-embed-text",
+		BaseURL:        os.Getenv("OLLAMA_BASE_URL"),
+		GenerateModel:  os.Getenv("OLLAMA_GENERATE_MODEL"),
+		EmbeddingModel: os.Getenv("OLLAMA_EMBEDDING_MODEL"),
 	}
+	ragService := &services.RAGService{ DB: db.DB, OllamaService: ollamaService, }
 	var llmService services.LLMService
 	llmProvider := os.Getenv("LLM_PROVIDER")
 	switch llmProvider {
@@ -64,20 +64,31 @@ func main() {
 		UserService:   userService,
 		OllamaService: ollamaService,
 		LLMService:    llmService,
+		RAGService :	ragService,
 		TopK:          3,
 		JWTSecret:     []byte(jwtSecretKey),
 	}
 
 	r := gin.Default()
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"*"}, // Allow all origins (you can specify specific domains if needed)
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-	}))
+
+	//for when the frontend is created
+	r.Use(func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "http://localhost:4200")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		c.Next()
+	})
 
 	chatHandler.SetupRoutes(r)
+	fileHandler := &handlers.FileHandler{
+		RAGService:  ragService,
+		ChatHandler: chatHandler,
+	}
+	fileHandler.SetupRoutes(r)
 	if err := r.Run(":3000"); err != nil {
 		log.Fatal(err)
 	}

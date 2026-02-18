@@ -18,6 +18,7 @@ type ChatHandler struct {
 	LLMService    services.LLMService 
 	UserService   *services.UserService
 	OllamaService *services.OllamaService
+	RAGService   *services.RAGService
 	TopK          int
 	JWTSecret     []byte
 }
@@ -236,6 +237,7 @@ func (ch *ChatHandler) CreateTabHandler(c *gin.Context) {
 	c.JSON(http.StatusCreated, tab)
 }
 
+/*if I decide to remove rag this is the old 
 func (ch *ChatHandler) ChatHandler(c *gin.Context) {
 	var input struct {
 		TabID   uint   `json:"tab_id"`
@@ -306,7 +308,7 @@ func buildPrompt(userInput string, memories []models.Memory) string {
 	sb.WriteString("\nUser Question:\n")
 	sb.WriteString(userInput)
 	return sb.String()
-}
+}*/
 
 func (ch *ChatHandler) DeleteTabHandler(c *gin.Context) {
     user, err := ch.Authenticate(c)
@@ -334,11 +336,107 @@ func (ch *ChatHandler) DeleteTabHandler(c *gin.Context) {
         return
     }
 
+	if err := ch.RAGService.DeleteDocumentsByTabID(user.ID, tab.ID); err != nil { 
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error deleting documents"})
+		return 
+	}
+
     err = ch.TabService.DeleteTab(user.ID, tab.ID)
     if err != nil {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Error deleting tab"})
         return
     }
 
-    c.JSON(http.StatusOK, gin.H{"message": "Tab and associated memories deleted successfully"})
+    c.JSON(http.StatusOK, gin.H{"message": "Tab, memories, and documents deleted successfully"})
+}
+
+func (ch *ChatHandler) ChatHandler(c *gin.Context) {
+    var input struct {
+        TabID   uint   `json:"tab_id"`
+        Message string `json:"message"`
+    }
+
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
+        return
+    }
+
+    user, err := ch.Authenticate(c)
+    if err != nil {
+        return
+    }
+
+    tabs, err := ch.TabService.GetTabs(user.ID)
+    if err != nil || len(tabs) == 0 {
+        c.JSON(http.StatusNotFound, gin.H{"error": "No tabs found"})
+        return
+    }
+
+    if input.TabID < 1 || input.TabID > uint(len(tabs)) {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid TabID"})
+        return
+    }
+
+    tab := tabs[input.TabID-1]
+    input.TabID = tab.ID
+
+    queryEmbedding, err := ch.OllamaService.GetEmbedding(input.Message)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error embedding message"})
+        return
+    }
+
+    memories, err := ch.MemoryService.RetrieveRelevant(queryEmbedding, ch.TopK, user.ID, input.TabID)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving memories"})
+        return
+    }
+
+    docs, err := ch.RAGService.Search(user.ID, input.TabID, input.Message, ch.TopK)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving documents"})
+        return
+    }
+
+    prompt := buildRAGPrompt(input.Message, memories, docs)
+    response, err := ch.LLMService.GenerateResponse(prompt)
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"})
+        return
+    }
+
+    if err := ch.MemoryService.StoreMemory(
+        fmt.Sprintf("Q: %s A: %s", input.Message, response),
+        queryEmbedding,
+        user.ID,
+        input.TabID,
+    ); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error storing memory"})
+        return
+    }
+
+    c.JSON(http.StatusOK, gin.H{"response": response})
+}
+
+func buildRAGPrompt(userInput string, memories []models.Memory, docs []models.Document) string {
+    var sb strings.Builder
+
+    sb.WriteString("Relevant Document Context:\n")
+    for _, d := range docs {
+        sb.WriteString("- ")
+        sb.WriteString(d.Content)
+        sb.WriteString("\n")
+    }
+
+    sb.WriteString("\nRelevant Chat Memory:\n")
+    for _, m := range memories {
+        sb.WriteString("- ")
+        sb.WriteString(m.Text)
+        sb.WriteString("\n")
+    }
+
+    sb.WriteString("\nUser Question:\n")
+    sb.WriteString(userInput)
+
+    return sb.String()
 }
