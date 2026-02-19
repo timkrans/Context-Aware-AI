@@ -237,79 +237,6 @@ func (ch *ChatHandler) CreateTabHandler(c *gin.Context) {
 	c.JSON(http.StatusCreated, tab)
 }
 
-/*if I decide to remove rag this is the old 
-func (ch *ChatHandler) ChatHandler(c *gin.Context) {
-	var input struct {
-		TabID   uint   `json:"tab_id"`
-		Message string `json:"message"`
-	}
-
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid input"})
-		return
-	}
-
-	user, err := ch.Authenticate(c)
-	if err != nil {
-		return
-	}
-
-	tabs, err := ch.TabService.GetTabs(user.ID)
-	if err != nil || len(tabs) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "No tabs found"})
-		return
-	}
-
-	if input.TabID < 1 || input.TabID > uint(len(tabs)) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid TabID"})
-		return
-	}
-
-	tab := tabs[input.TabID-1]
-	input.TabID = tab.ID
-	queryEmbedding, err := ch.OllamaService.GetEmbedding(input.Message)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error embedding message"})
-		return
-	}
-
-	memories, err := ch.MemoryService.RetrieveRelevant(queryEmbedding, ch.TopK, user.ID, input.TabID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving memories"})
-		return
-	}
-
-	prompt := buildPrompt(input.Message, memories)
-	response, err := ch.LLMService.GenerateResponse(prompt)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"})
-		return
-	}
-
-	err = ch.MemoryService.StoreMemory(fmt.Sprintf("Q: %s A: %s", input.Message, response), queryEmbedding, user.ID, input.TabID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error storing memory"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"response": response,
-	})
-}
-
-func buildPrompt(userInput string, memories []models.Memory) string {
-	var sb strings.Builder
-	sb.WriteString("Relevant Context:\n")
-	for _, m := range memories {
-		sb.WriteString("- ")
-		sb.WriteString(m.Text)
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\nUser Question:\n")
-	sb.WriteString(userInput)
-	return sb.String()
-}*/
-
 func (ch *ChatHandler) DeleteTabHandler(c *gin.Context) {
     user, err := ch.Authenticate(c)
     if err != nil {
@@ -354,6 +281,8 @@ func (ch *ChatHandler) ChatHandler(c *gin.Context) {
     var input struct {
         TabID   uint   `json:"tab_id"`
         Message string `json:"message"`
+		//optional to add reason to the chat
+		Reasoning *bool `json:"reasoning"`
     }
 
     if err := c.ShouldBindJSON(&input); err != nil {
@@ -397,13 +326,32 @@ func (ch *ChatHandler) ChatHandler(c *gin.Context) {
         c.JSON(http.StatusInternalServerError, gin.H{"error": "Error retrieving documents"})
         return
     }
-
+	useReasoning := input.Reasoning != nil && *input.Reasoning
+	var response string
     prompt := buildRAGPrompt(input.Message, memories, docs)
-    response, err := ch.LLMService.GenerateResponse(prompt)
-    if err != nil {
-        c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"})
-        return
-    }
+	if useReasoning {
+		//reasoning path 
+		reasoningPrompt := fmt.Sprintf( "You are a reasoning model. Analyze the context and produce a structured reasoning plan.\n\n%s", prompt, ) 
+		//TODO add a specific model for reasoning to will be another interface
+		reasoningOutput, err := ch.LLMService.GenerateResponse(reasoningPrompt) 
+		if err != nil { 
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating reasoning"}) 
+			return 
+		} 
+		finalPrompt := fmt.Sprintf( "Here is the reasoning:\n%s\n\nNow produce the final answer for the user.", reasoningOutput, ) 
+		response, err = ch.LLMService.GenerateResponse(finalPrompt) 
+		if err != nil { 
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"}) 
+			return 
+		} 
+	} else {
+		//direct answer path 
+		response, err = ch.LLMService.GenerateResponse(prompt) 
+		if err != nil { 
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Error generating response"}) 
+			return 
+		} 
+	}
 
     if err := ch.MemoryService.StoreMemory(
         fmt.Sprintf("Q: %s A: %s", input.Message, response),

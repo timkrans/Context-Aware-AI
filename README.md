@@ -1,5 +1,5 @@
 # Context-Aware-AI
-- This is a memory retrieval system that allows the user to have its memories encoded and saved for easy retrieval. It also has rag so files can be uploaded and used as well.
+- This is a memory retrieval system that allows the user to have its memories encoded and saved for easy retrieval with an optional reasoning model. It also has rag so files can be uploaded and used as well.
 
 ## Prerequisites 
 - install ollama
@@ -10,8 +10,12 @@
 ## Architecture
 - Embedding model: nomic-embed-text (via Ollama)
 - Current DB: SQLite (stores text + embeddings)
-- Retrieval: cosine similarity search
+- Retrieval: 
+  - Cosine similarity search
 [read about cosine similarity](https://en.wikipedia.org/wiki/Cosine_similarity)
+  - Recency weighting using timestamps
+  - Final score = 0.8 * cosine_similarity + 0.2 * recency_score
+- RAG support: Uploaded files are chunked, embedded, and stored as retrievable memory
 
 ## API Routes
 
@@ -43,7 +47,7 @@
 ### 5. **Chat**
 - **POST** `/chat`
   - Request Header: `Authorization: Bearer <session_token>`
-  - Request Body: `{ "tab_id": <tab_id>, "message": "string" }`
+  - Request Body: `{ "tab_id": <tab_id>, "message": "string" ,  "reasoning": <boolean>  // Optional}`
   - Response: `200 OK` with AI-generated response
 
 ### 6. Upload File
