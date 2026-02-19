@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"math"
+	"time"
 	"sort"
 	"context-aware-ai/models"
 	"gorm.io/gorm"
@@ -39,40 +40,74 @@ func (s *MemoryService) GetAllMemories(userID uint, tabID uint) ([]models.Memory
 	return memories, err
 }
 
-func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64, topK int, userID uint, tabID uint) ([]models.Memory, error) {
-	memories, err := s.GetAllMemories(userID, tabID)
-	if err != nil {
-		return nil, err
-	}
+func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64,topK int, userID uint,tabID uint,) ([]models.Memory, error) {
+    memories, err := s.GetAllMemories(userID, tabID)
+    if err != nil {
+        return nil, err
+    }
+    if len(memories) == 0 {
+        return []models.Memory{}, nil
+    }
 
-	type scoredMemory struct {
-		Memory models.Memory
-		Score  float64
-	}
+    type scoredMemory struct {
+        Memory models.Memory
+        Score  float64
+    }
 
-	var scored []scoredMemory
+    scored := make([]scoredMemory, 0, len(memories))
+    newest := memories[0].CreatedAt
+    oldest := memories[0].CreatedAt
 
-	for _, m := range memories {
-		var emb []float64
-		err := json.Unmarshal(m.Embedding, &emb)
-		if err != nil {
-			continue
-		}
-		score := cosineSimilarity(queryEmbedding, emb)
-		scored = append(scored, scoredMemory{Memory: m, Score: score})
-	}
+    for _, m := range memories {
+        if m.CreatedAt.After(newest) {
+            newest = m.CreatedAt
+        }
+        if m.CreatedAt.Before(oldest) {
+            oldest = m.CreatedAt
+        }
+    }
 
-	sort.Slice(scored, func(i, j int) bool {
-		return scored[i].Score > scored[j].Score
-	})
+    timeRange := newest.Sub(oldest)
+    if timeRange == 0 {
+        timeRange = time.Second 
+    }
+	//weight of consine similarity
+    alpha := 0.8
 
-	var results []models.Memory
-	for i := 0; i < topK && i < len(scored); i++ {
-		results = append(results, scored[i].Memory)
-	}
+    for _, m := range memories {
+        var emb []float64
+        if err := json.Unmarshal(m.Embedding, &emb); err != nil {
+            continue
+        }
 
-	return results, nil
+        cos := cosineSimilarity(queryEmbedding, emb)
+
+        recency := float64(m.CreatedAt.Sub(oldest)) / float64(timeRange)
+
+        finalScore := alpha*cos + (1-alpha)*recency
+
+        scored = append(scored, scoredMemory{
+            Memory: m,
+            Score:  finalScore,
+        })
+    }
+
+    sort.Slice(scored, func(i, j int) bool {
+        return scored[i].Score > scored[j].Score
+    })
+
+    if topK > len(scored) {
+        topK = len(scored)
+    }
+
+    results := make([]models.Memory, topK)
+    for i := 0; i < topK; i++ {
+        results[i] = scored[i].Memory
+    }
+
+    return results, nil
 }
+
 
 func cosineSimilarity(a, b []float64) float64 {
 	if len(a) != len(b) {

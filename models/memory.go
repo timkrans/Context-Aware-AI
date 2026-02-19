@@ -1,9 +1,12 @@
 package models
 
+import("time")
+
 type Memory struct {
-	ID       uint   `gorm:"primaryKey"`
-	Text     string
-	Embedding []byte `gorm:"type:blob"`
-	UserID   uint   `gorm:"index"`
-	TabID    uint   `gorm:"index"`
+    ID        uint      `gorm:"primaryKey"`
+    Text      string
+    Embedding []byte    `gorm:"type:blob"`
+    UserID    uint      `gorm:"index"`
+    TabID     uint      `gorm:"index"`
+    CreatedAt time.Time
 }
