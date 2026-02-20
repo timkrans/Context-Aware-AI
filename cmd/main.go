@@ -12,10 +12,9 @@ import (
 
 func main() {
 	//added my own loading to help keep depencies to a minimum
-	if err := loadenv.LoadEnv(""); err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
+	_ = loadenv.LoadEnv("")
+	//took out the other check because it breaks if dockerized 
+	//but this will check if set
 	jwtSecretKey := os.Getenv("JWT_SECRET_KEY")
 	if jwtSecretKey == "" {
 		log.Fatal("JWT_SECRET_KEY not set in .env file")
