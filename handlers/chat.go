@@ -371,7 +371,10 @@ func buildRAGPrompt(userInput string, memories []models.Memory, docs []models.Do
 
     sb.WriteString("Relevant Document Context:\n")
     for _, d := range docs {
-        sb.WriteString("- ")
+		//adding file name to context
+		sb.WriteString("- File: ")
+        sb.WriteString(d.Source) 
+        sb.WriteString("\nContent: ")
         sb.WriteString(d.Content)
         sb.WriteString("\n")
     }
