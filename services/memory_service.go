@@ -2,7 +2,6 @@ package services
 
 import (
 	"encoding/json"
-	"math"
 	"time"
 	"sort"
 	"context-aware-ai/models"
@@ -19,7 +18,9 @@ func NewMemoryService(db *gorm.DB) *MemoryService {
 }
 
 func (s *MemoryService) StoreMemory(text string, embedding []float64, userID uint, tabID uint) error {
-	data, err := json.Marshal(embedding)
+	embedding = normalize(embedding)
+
+	data, err := json.Marshal(embedding)	
 	if err != nil {
 		return err
 	}
@@ -73,18 +74,18 @@ func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64,topK int, user
     }
 	//weight of consine similarity
     alpha := 0.8
-
+    queryEmbedding = normalize(queryEmbedding)
     for _, m := range memories {
         var emb []float64
         if err := json.Unmarshal(m.Embedding, &emb); err != nil {
             continue
         }
 
-        cos := cosineSimilarity(queryEmbedding, emb)
+        dot := dotProduct(queryEmbedding, emb)
 
         recency := float64(m.CreatedAt.Sub(oldest)) / float64(timeRange)
 
-        finalScore := alpha*cos + (1-alpha)*recency
+        finalScore := alpha*dot + (1-alpha)*recency
 
         scored = append(scored, scoredMemory{
             Memory: m,
@@ -106,23 +107,6 @@ func (s *MemoryService) RetrieveRelevant(queryEmbedding []float64,topK int, user
     }
 
     return results, nil
-}
-
-
-func cosineSimilarity(a, b []float64) float64 {
-	if len(a) != len(b) {
-		return 0
-	}
-	var dot, normA, normB float64
-	for i := range a {
-		dot += a[i] * b[i]
-		normA += a[i] * a[i]
-		normB += b[i] * b[i]
-	}
-	if normA == 0 || normB == 0 {
-		return 0
-	}
-	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 func (s *MemoryService) DeleteMemoriesByTabID(userID uint, tabID uint) error {

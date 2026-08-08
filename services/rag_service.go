@@ -4,7 +4,6 @@ import (
     "bytes"
     "context-aware-ai/models"
     "encoding/gob"
-    "math"
     "sort"
 
     "gorm.io/gorm"
@@ -27,19 +26,6 @@ func decodeEmbedding(b []byte) []float64 {
     return vec
 }
 
-func cosine(a, b []float64) float64 {
-    var dot, na, nb float64
-    for i := range a {
-        dot += a[i] * b[i]
-        na += a[i] * a[i]
-        nb += b[i] * b[i]
-    }
-    if na == 0 || nb == 0 {
-        return 0
-    }
-    return dot / (math.Sqrt(na) * math.Sqrt(nb))
-}
-
 func (r *RAGService) DeleteDocumentsByTabID(userID, tabID uint) error {
     return r.DB.Where("user_id = ? AND tab_id = ?", userID, tabID).Delete(&models.Document{}).Error
 }
@@ -50,6 +36,8 @@ func (r *RAGService) IndexChunk(userID, tabID uint, source, content string) erro
     if err != nil {
         return err
     }
+
+    emb = normalize(emb)
 
     doc := models.Document{
         UserID:    userID,
@@ -67,7 +55,8 @@ func (r *RAGService) Search(userID, tabID uint, query string, topK int) ([]model
     if err != nil {
         return nil, err
     }
-
+	
+    qEmb = normalize(qEmb)
     var docs []models.Document
     if err := r.DB.Where("user_id = ? AND tab_id = ?", userID, tabID).Find(&docs).Error; err != nil {
         return nil, err
@@ -81,7 +70,7 @@ func (r *RAGService) Search(userID, tabID uint, query string, topK int) ([]model
     results := make([]scored, 0, len(docs))
     for _, d := range docs {
         emb := decodeEmbedding(d.Embedding)
-        score := cosine(qEmb, emb)
+        score := dotProduct(qEmb, emb)
         results = append(results, scored{Doc: d, Score: score})
     }
 
